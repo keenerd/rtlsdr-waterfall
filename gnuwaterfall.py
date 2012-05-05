@@ -98,7 +98,7 @@ def mapping(x):
     r = int((x+50) * 255 // 50)
     r = max(0, r)
     r = min(255, r)
-    return r,0,0
+    return r,r,100
 
 def log2(x):
     return math.log(x)/math.log(2)
