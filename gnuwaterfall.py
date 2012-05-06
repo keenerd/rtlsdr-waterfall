@@ -141,10 +141,9 @@ def render_sample(now, dt, freqs, powers):
         rgb = mapping(powers[i])
         colors.extend(rgb)
         colors.extend(rgb)
-    # not using batches for now, it bugs up and draws a triangle thing
-    #vert_list = batch.add(2*len(powers), GL_QUAD_STRIP, None,
-    #    ('v2f/static', tuple(quads)), ('c3B/static', tuple(colors)))
-    vert_list = pyglet.graphics.vertex_list(2*len(powers),
+    quads = quads[:2] + quads + quads[-2:]
+    colors = colors[:3] + colors + colors[-3:]
+    vert_list = batch.add(len(quads)//2, GL_QUAD_STRIP, None,
         ('v2f/static', tuple(quads)), ('c3B/static', tuple(colors)))
     vertexes[now] = vert_list
 
@@ -181,15 +180,11 @@ def update(dt):
     freqs,power = acquire_range(freq_lower, freq_upper)
     render_sample(now, dt, freqs, power)
     window.clear()
-    #batch.draw()
-    to_pop = []
-    for k,v in vertexes.iteritems():
-        if k < (now - history):
-            to_pop.append(k)
-        v.draw(GL_QUAD_STRIP)
-    for k in to_pop:
-        vertexes[k].delete()
-        vertexes.pop(k)
+    batch.draw()
+    for k in list(vertexes.keys()):
+        if k < now-60:
+            vertexes[k].delete()
+            vertexes.pop(k)
     change_viewport(freq_lower/1e6, freq_upper/1e6, now-history, now)
     vp = viewport
     delta = vp[1] - vp[0]
