@@ -11,7 +11,7 @@ from itertools import *
 from radio_math import psd
 
 if len(sys.argv) != 3:
-    print "use: gnuwaterfall.py <start> <stop>"
+    print "use: gnuwaterfall.py <lower freq> <upper freq>"
     print "    frequencies in hertz"
     print "    example: gnuwaterfall.py 80e6 100e6"
     print "    arrow keys pan and zoom"
@@ -38,7 +38,7 @@ class SdrWrap(object):
         self.read_samples = self.sdr.read_samples
         self.prev_fc = None
         self.prev_fs = None
-        self.sdr.gain = 1
+        self.sdr.gain = 49
     def tune(self, fc, fs):
         if fc == self.prev_fc and fs == self.prev_fs:
             return
@@ -163,7 +163,7 @@ def text(s, x, y):
     vp = viewport
     ratio = ((vp[3]-vp[2])/window.height) / ((vp[1]-vp[0])/window.width)
     label = pyglet.text.Label(s, font_name="Time New Roman", font_size=48,
-        x=0, y=0, color=(255,255,255,64),
+        x=0, y=0, color=(255,255,255,128),
         anchor_x='center', anchor_y='center')
     verts = []
     for i,v in enumerate(label._vertex_lists[0].vertices):
