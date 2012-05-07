@@ -3,12 +3,23 @@
 # GNU Waterfall
 # licensed GPLv3
 
-import sys, math, time, numpy, pyglet, rtlsdr
+import sys, math, time, numpy, pyglet
+
+from rtlsdr import *
+from itertools import *
 from pyglet.gl import *
 from pyglet.window import key
-from itertools import *
 
 from radio_math import psd
+
+# todo
+# more text widgets
+# graph lines
+# hover freq
+# mouse control
+# interleaved scans
+# constellation plot
+
 
 if len(sys.argv) != 3:
     print "use: gnuwaterfall.py <lower freq> <upper freq>"
@@ -34,11 +45,11 @@ history = 60  # seconds
 class SdrWrap(object):
     "wrap sdr and try to manage tuning"
     def __init__(self):
-        self.sdr = rtlsdr.RtlSdr()
+        self.sdr = RtlSdr()
         self.read_samples = self.sdr.read_samples
         self.prev_fc = None
         self.prev_fs = None
-        self.sdr.gain = 49
+        self.sdr.gain = 40
     def tune(self, fc, fs):
         if fc == self.prev_fc and fs == self.prev_fs:
             return
@@ -83,8 +94,8 @@ def on_key_press(symbol, modifiers):
         freq_lower += delta * 0.1
         freq_upper -= delta * 0.1
     elif symbol == key.DOWN:
-        freq_lower -= delta * 0.1
-        freq_upper += delta * 0.1
+        freq_lower -= delta * 0.125
+        freq_upper += delta * 0.125
     freq_lower = max(60e6, freq_lower)
     freq_upper = min(1700e6, freq_upper)
     #print '%0.2fMHz - %0.2fMHz' % (freq_lower/1e6, freq_upper/1e6)
@@ -103,7 +114,7 @@ def mapping(x):
 def log2(x):
     return math.log(x)/math.log(2)
 
-def acquire_sample(center, bw, detail, samples=8):
+def acquire_sample(center, bw, detail, samples=8, relay=None):
     "collect a single frequency"
     assert bw <= 2.8e6
     if detail < 8:
@@ -114,16 +125,19 @@ def acquire_sample(center, bw, detail, samples=8):
     data = sdr.read_samples(sample_count)
     ys,xs = psd(data, NFFT=detail, Fs=bw/1e6, Fc=center/1e6)
     ys = 10 * numpy.log10(ys)
+    if relay:
+        relay(center, bw, data)
     return xs, ys
 
 def acquire_range(lower, upper):
     "collect multiple frequencies"
-    if upper - lower < 2.8e6:
+    delta = upper - lower
+    if delta < 2.8e6:
         # single sample
-        return acquire_sample((upper+lower)/2, upper-lower, detail=window.width)
+        return acquire_sample((upper+lower)/2, 2.8e6, detail=window.width*2.8e6/delta)
     xs2 = numpy.array([])
     ys2 = numpy.array([])
-    detail = window.width // ((upper-lower)/(2.8e6))
+    detail = window.width // ((delta)/(2.8e6))
     for f in range(int(lower), int(upper), int(2.8e6)):
         xs,ys = acquire_sample(f+1.4e6, 2.8e6, detail=detail)
         xs2 = numpy.append(xs2, xs) 
@@ -191,7 +205,7 @@ def update(dt):
     text('%0.3fMHz' % (freq_lower/1e6), vp[0]+delta*0.15, now-5)
     text('%0.3fMHz' % (freq_upper/1e6), vp[1]-delta*0.15, now-5)
 
-pyglet.clock.schedule_interval(update, 1/10.0)
+pyglet.clock.schedule_interval(update, 1/60.0)
 pyglet.app.run()
 
 
