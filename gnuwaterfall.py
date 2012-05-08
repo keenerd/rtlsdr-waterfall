@@ -10,12 +10,11 @@ from itertools import *
 from pyglet.gl import *
 from pyglet.window import key
 
-from radio_math import psd
+from radio_math import psd, Bandpass
 
 # todo
 # graph lines
 # interleaved scans
-# constellation plot
 
 if len(sys.argv) != 3:
     print "use: gnuwaterfall.py <lower freq> <upper freq>"
@@ -39,8 +38,10 @@ class Stateful(object):
         self.focus      = False
         self.hover      = 0
         self.highlight  = False
-        self.hl_start   = None
-        self.hl_stop    = None
+        self.hl_lo      = None
+        self.hl_hi      = None
+        self.hl_filter  = None
+        self.hl_pixels  = None
 
 
 state = Stateful()
@@ -80,8 +81,9 @@ class SdrWrap(object):
         self.prev_g  = g
         time.sleep(0.04)  # wait for settle
         self.sdr.read_samples(2**11)  # clear buffer
-    # the whole 10x gain number is annoying
+        configure_highlight()
     def gain_change(self, x):
+        # the whole 10x gain number is annoying
         real_g = int(self.prev_g * 10)
         i = self.sdr.GAIN_VALUES.index(real_g)
         i += x
@@ -107,11 +109,6 @@ glHint(GL_LINE_SMOOTH_HINT, GL_DONT_CARE)
 
 fnt = pyglet.font.load('Monospace')
 fnt.size = 48
-
-def x_to_freq(x):
-    vp = state.viewport
-    delta = state.freq_upper - state.freq_lower
-    return delta * x / window.width + state.freq_lower
 
 @window.event
 def on_draw():
@@ -154,6 +151,7 @@ def on_mouse_leave(x, y):
 @window.event
 def on_mouse_press(x, y, buttons, modifiers):
     state.highlight = False
+    state.hl_filter = None
 
 @window.event
 def on_mouse_scroll(x, y, scroll_x, scroll_y):
@@ -164,16 +162,49 @@ def on_mouse_drag(x, y, dx, dy, buttons, modifiers):
     cursor = x_to_freq(x)
     if not state.highlight:
         state.highlight = True
-        state.hl_start  = cursor
-        state.hl_stop   = cursor
+        state.hl_lo  = cursor
+        state.hl_hi   = cursor
         return
-    if cursor > state.hl_start:
-        state.hl_stop  = cursor
+    if cursor > state.hl_lo:
+        state.hl_hi  = cursor
     else:
-        state.hl_start = cursor
+        state.hl_lo = cursor
     state.hover = cursor
+    if state.hl_lo != state.hl_hi:
+        configure_highlight()
 
 batch = pyglet.graphics.Batch()
+
+def x_to_freq(x):
+    vp = state.viewport
+    delta = state.freq_upper - state.freq_lower
+    return delta * x / window.width + state.freq_lower
+
+def configure_highlight():
+    if not state.highlight:
+        return
+    pass_fc = (state.hl_lo + state.hl_hi) / 2
+    pass_bw = state.hl_hi - state.hl_lo
+    state.hl_filter = Bandpass(sdr.prev_fc, sdr.prev_fs, 
+                               pass_fc, pass_bw)
+
+def constellation(stream):
+    if state.hl_filter is None:
+        state.hl_pixels = None
+        return
+    vp = state.viewport
+    stream2 = state.hl_filter(stream)
+    bounds = max(numpy.abs(stream2))
+    if bounds > 1:
+        stream2 = stream2/bounds
+    points = []
+    x,y = vp[0]*0.10 + vp[1]*0.90, vp[2]*0.80 + vp[3]*0.20
+    ratio = ((vp[3]-vp[2])/window.height) / ((vp[1]-vp[0])/window.width)
+    for p in stream2:
+        xp,yp = p.real, p.imag
+        points.append(xp/5 + x)
+        points.append(yp*ratio/5 + y)
+    state.hl_pixels = points
 
 def mapping(x):
     "assumes -50 to 0 range, returns color"
@@ -197,7 +228,7 @@ def acquire_sample(center, bw, detail, samples=8, relay=None):
     ys,xs = psd(data, NFFT=detail, Fs=bw/1e6, Fc=center/1e6)
     ys = 10 * numpy.log10(ys)
     if relay:
-        relay(center, bw, data)
+        relay(data)
     return xs, ys
 
 def acquire_range(lower, upper):
@@ -205,7 +236,9 @@ def acquire_range(lower, upper):
     delta = upper - lower
     if delta < 2.8e6:
         # single sample
-        return acquire_sample((upper+lower)/2, 2.8e6, detail=window.width*2.8e6/delta)
+        return acquire_sample((upper+lower)/2, 2.8e6,
+            detail=window.width*2.8e6/delta,
+            relay=constellation)
     xs2 = numpy.array([])
     ys2 = numpy.array([])
     detail = window.width // ((delta)/(2.8e6))
@@ -223,6 +256,7 @@ def render_sample(now, dt, freqs, powers):
         rgb = mapping(powers[i])
         colors.extend(rgb)
         colors.extend(rgb)
+    # quads/colors are slanted?
     quads = quads[:2] + quads + quads[-2:]
     colors = colors[:3] + colors + colors[-3:]
     # something here leaks memory at 50MB/minute
@@ -267,7 +301,7 @@ def highlighter():
         return
     # draw a single translucent quad
     vp = state.viewport
-    x1,x2,y1,y2 = state.hl_start/1e6, state.hl_stop/1e6, vp[2], vp[3]
+    x1,x2,y1,y2 = state.hl_lo/1e6, state.hl_hi/1e6, vp[2], vp[3]
     quad = (x1,y1, x2,y1, x2,y2, x1,y2)
     color = (255, 255, 255, 128) * 4
     pyglet.graphics.draw(4, GL_POLYGON, ('v2f', quad),
@@ -287,7 +321,9 @@ def update(dt):
             ('Upper:', '%0.3fMHz' % (state.freq_upper/1e6)),
             ('Gain: ', '%0.1fdB'  % sdr.sdr.gain),]
     if state.highlight:
-        text.append(('Width:', '%0.3fkHz' % ((state.hl_stop-state.hl_start)/1e3)))
+        text.append(('Width:', '%0.3fkHz' % ((state.hl_hi-state.hl_lo)/1e3)))
+    if state.highlight and state.hl_pixels:
+        pyglet.graphics.draw(len(state.hl_pixels)/2, GL_POINTS, ('v2f', state.hl_pixels))
     if state.focus:
         text.append(('Mouse:', '%0.3fMHz' % (state.hover/1e6)))
     textbox(text)

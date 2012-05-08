@@ -1,10 +1,50 @@
 #! /usr/bin/env python
 
 from itertools import *
-import numpy
+import math, numpy
+
+tau = 2 * math.pi
+
+class Translate(object):
+    "set up once, consumes an I/Q stream, returns an I/Q stream"
+    def __init__(self, num, den):
+        angles = [(a*tau*num/den) % tau for a in range(den)]
+        fir = [complex(math.cos(a), math.sin(a)) for a in angles]
+        self.continuous_fir = cycle(fir)
+    def __call__(self, stream):
+        return numpy.array([s1*s2 for s1,s2 in izip(self.continuous_fir, stream)])
+
+class Downsample(object):
+    "set up once, consumes an I/Q stream, returns an I/Q stream"
+    # aka lowpass
+    # todo, floating scales
+    def __init__(self, scale):
+        self.scale = scale
+        self.offset = 0
+    def __call__(self, stream):
+        prev_off = self.offset
+        self.offset = self.scale - ((len(stream) + self.offset) % self.scale)
+        return stream[prev_off::self.scale]
+
+class Upsample(object):
+    # numpy.interp would be perfect, but can't do complex
+    # or floating point scaling factor
+    # minimal power interpolation?
+    pass
+
+class Bandpass(object):
+    "set up once, consumes an I/Q stream, returns an I/Q stream"
+    def __init__(self, center_fc, center_bw, pass_fc, pass_bw):
+        # some errors from dropping the fractional parts of the ratio
+        # either optimize tuning, scale up, or use floating point
+        ratio = (center_fc - pass_fc) / center_bw
+        self.translate = Translate(ratio * 1024, 1024)
+        self.downsample = Downsample(int(center_bw/pass_bw))
+    def __call__(self, stream):
+        return self.downsample(self.translate(stream))
 
 # check license on matplotlib code
-# chop out as much as possible
+# chop out as much slow junk as possible
 
 # http://mail.scipy.org/pipermail/numpy-discussion/2003-January/014298.html
 # http://cleaver.cnx.rice.edu/eggs_directory/obspy.signal/obspy.signal/obspy/signal/freqattributes.py
