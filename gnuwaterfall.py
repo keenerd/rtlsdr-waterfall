@@ -49,18 +49,32 @@ class SdrWrap(object):
         self.read_samples = self.sdr.read_samples
         self.prev_fc = None
         self.prev_fs = None
-        self.sdr.gain = 40
-    def tune(self, fc, fs):
-        if fc == self.prev_fc and fs == self.prev_fs:
+        self.prev_g  = 19
+        self.sdr.gain = 19
+    def tune(self, fc, fs, g):
+        if fc == self.prev_fc and fs == self.prev_fs and g == self.prev_g:
             return
         if fc != self.prev_fc:
             self.sdr.center_freq = fc
         if fs != self.prev_fs:
             self.sdr.sample_rate = fs
+        if g != self.prev_g:
+            self.sdr.gain = g
         self.prev_fc = fc
         self.prev_fs = fs
+        self.prev_g  = g
         time.sleep(0.04)  # wait for settle
         self.sdr.read_samples(2**11)  # clear buffer
+    # the whole 10x gain number is annoying
+    def gain_change(self, x):
+        real_g = int(self.prev_g * 10)
+        i = self.sdr.GAIN_VALUES.index(real_g)
+        i += x
+        i = min(len(self.sdr.GAIN_VALUES) -1, i)
+        i = max(0, i)
+        new_g = self.sdr.GAIN_VALUES[i]
+        self.sdr.gain = new_g / 10.0
+        self.prev_g   = new_g / 10.0
 
 sdr = SdrWrap()
 
@@ -99,6 +113,10 @@ def on_key_press(symbol, modifiers):
     elif symbol == key.DOWN:
         freq_lower -= delta * 0.125
         freq_upper += delta * 0.125
+    elif symbol == key.BRACKETLEFT:
+        sdr.gain_change(-1)
+    elif symbol == key.BRACKETRIGHT:
+        sdr.gain_change(1)
     freq_lower = max(60e6, freq_lower)
     freq_upper = min(1700e6, freq_upper)
     #print '%0.2fMHz - %0.2fMHz' % (freq_lower/1e6, freq_upper/1e6)
@@ -122,7 +140,7 @@ def acquire_sample(center, bw, detail, samples=8, relay=None):
     assert bw <= 2.8e6
     if detail < 8:
         detail = 8
-    sdr.tune(center, bw)
+    sdr.tune(center, bw, sdr.prev_g)
     detail = 2**int(math.ceil(log2(detail)))
     sample_count = samples * detail
     data = sdr.read_samples(sample_count)
@@ -212,7 +230,8 @@ def update(dt):
     vp = viewport
     delta = vp[1] - vp[0]
     textbox(('Lower:', '%0.3fMHz' % (freq_lower/1e6)),
-            ('Upper:', '%0.3fMHz' % (freq_upper/1e6)),)
+            ('Upper:', '%0.3fMHz' % (freq_upper/1e6)),
+            ('Gain: ', '%0.1fdB'  % sdr.sdr.gain),)
 
 pyglet.clock.schedule_interval(update, 1/60.0)
 pyglet.app.run()
