@@ -14,10 +14,8 @@ from radio_math import psd
 
 # todo
 # graph lines
-# mouse control
 # interleaved scans
 # constellation plot
-
 
 if len(sys.argv) != 3:
     print "use: gnuwaterfall.py <lower freq> <upper freq>"
@@ -25,6 +23,7 @@ if len(sys.argv) != 3:
     print "    example: gnuwaterfall.py 929e6 930e6"
     print "    arrow keys pan and zoom"
     print "    brackets to adjust gain"
+    print "    click and drag to select"
     print "    esc to quit"
     sys.exit(2)
 
@@ -33,12 +32,15 @@ class Stateful(object):
     def __init__(self):
         self.freq_lower = None
         self.freq_upper = None
-        self.vertexes   = {}   # timestamp : vertex_list
+        self.vertexes   = []   # (timestamp, vertex_list)
         self.time_start = None
         self.viewport   = None
         self.history    = 60   # seconds
         self.focus      = False
         self.hover      = 0
+        self.highlight  = False
+        self.hl_start   = None
+        self.hl_stop    = None
 
 
 state = Stateful()
@@ -106,6 +108,11 @@ glHint(GL_LINE_SMOOTH_HINT, GL_DONT_CARE)
 fnt = pyglet.font.load('Monospace')
 fnt.size = 48
 
+def x_to_freq(x):
+    vp = state.viewport
+    delta = state.freq_upper - state.freq_lower
+    return delta * x / window.width + state.freq_lower
+
 @window.event
 def on_draw():
     pass
@@ -134,10 +141,7 @@ def on_key_press(symbol, modifiers):
 
 @window.event
 def on_mouse_motion(x, y, dx, dy):
-    vp = state.viewport
-    delta = state.freq_upper - state.freq_lower
-    freq = delta * x / window.width + state.freq_lower
-    state.hover = freq
+    state.hover = x_to_freq(x)
 
 @window.event
 def on_mouse_enter(x, y):
@@ -148,12 +152,26 @@ def on_mouse_leave(x, y):
     state.focus = False
 
 @window.event
+def on_mouse_press(x, y, buttons, modifiers):
+    state.highlight = False
+
+@window.event
 def on_mouse_scroll(x, y, scroll_x, scroll_y):
     pass
 
 @window.event
 def on_mouse_drag(x, y, dx, dy, buttons, modifiers):
-    pass
+    cursor = x_to_freq(x)
+    if not state.highlight:
+        state.highlight = True
+        state.hl_start  = cursor
+        state.hl_stop   = cursor
+        return
+    if cursor > state.hl_start:
+        state.hl_stop  = cursor
+    else:
+        state.hl_start = cursor
+    state.hover = cursor
 
 batch = pyglet.graphics.Batch()
 
@@ -198,8 +216,6 @@ def acquire_range(lower, upper):
     return xs2, ys2
 
 def render_sample(now, dt, freqs, powers):
-    min_p = min(powers)
-    max_p = max(powers)
     quads = []
     colors = []
     for i,f in enumerate(freqs):
@@ -209,9 +225,10 @@ def render_sample(now, dt, freqs, powers):
         colors.extend(rgb)
     quads = quads[:2] + quads + quads[-2:]
     colors = colors[:3] + colors + colors[-3:]
+    # something here leaks memory at 50MB/minute
     vert_list = batch.add(len(quads)//2, GL_QUAD_STRIP, None,
         ('v2f/static', tuple(quads)), ('c3B/static', tuple(colors)))
-    state.vertexes[now] = vert_list
+    state.vertexes.append((now, vert_list))
 
 def change_viewport(x1, x2, y1, y2):
     glMatrixMode(GL_PROJECTION)
@@ -244,7 +261,17 @@ def textbox(lines):
                 verts.append(v/ratio/20 + x)
         label._layout._vertex_lists[i].vertices = verts
     label.draw()
-        
+
+def highlighter():
+    if not state.highlight:
+        return
+    # draw a single translucent quad
+    vp = state.viewport
+    x1,x2,y1,y2 = state.hl_start/1e6, state.hl_stop/1e6, vp[2], vp[3]
+    quad = (x1,y1, x2,y1, x2,y2, x1,y2)
+    color = (255, 255, 255, 128) * 4
+    pyglet.graphics.draw(4, GL_POLYGON, ('v2f', quad),
+                         ('c4B', color))
 
 def update(dt):
     now = time.time() - state.time_start
@@ -256,16 +283,19 @@ def update(dt):
                     now - state.history, now)
     vp = state.viewport
     delta = vp[1] - vp[0]
-    stat = [('Lower:', '%0.3fMHz' % (state.freq_lower/1e6)),
+    text = [('Lower:', '%0.3fMHz' % (state.freq_lower/1e6)),
             ('Upper:', '%0.3fMHz' % (state.freq_upper/1e6)),
             ('Gain: ', '%0.1fdB'  % sdr.sdr.gain),]
+    if state.highlight:
+        text.append(('Width:', '%0.3fkHz' % ((state.hl_stop-state.hl_start)/1e3)))
     if state.focus:
-        stat.append(('Mouse:', '%0.3fMHz' % (state.hover/1e6)))
-    textbox(stat)
-    for k in list(state.vertexes.keys()):
-        if k < now-60:
-            state.vertexes[k].delete()
-            state.vertexes.pop(k)
+        text.append(('Mouse:', '%0.3fMHz' % (state.hover/1e6)))
+    textbox(text)
+    highlighter()
+    while state.vertexes and state.vertexes[0][0] < (now-60):
+        state.vertexes[0][1].delete()
+        v = state.vertexes.pop(0)
+        del(v)
 
 pyglet.clock.schedule_interval(update, 1/60.0)
 pyglet.app.run()
