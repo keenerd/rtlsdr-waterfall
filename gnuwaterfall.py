@@ -40,7 +40,7 @@ history = 60  # seconds
 # Nothing is ever updated to scroll, instead panning moves the viewport
 # and changes the aspect ratio.
 # Good luck drawing widgets on top of that.
-# (See the text() function for the required contortions to overlay.)
+# (See the textbox() function for the required contortions to overlay.)
 
 class SdrWrap(object):
     "wrap sdr and try to manage tuning"
@@ -75,6 +75,9 @@ glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
 glEnable(GL_BLEND)
 glEnable(GL_LINE_SMOOTH)
 glHint(GL_LINE_SMOOTH_HINT, GL_DONT_CARE)
+
+fnt = pyglet.font.load('Monospace')
+fnt.size = 48
 
 @window.event
 def on_draw():
@@ -172,22 +175,28 @@ def change_viewport(x1, x2, y1, y2):
     # todo - find way of reading viewport
     viewport = (x1, x2, y1, y2)
 
-def text(s, x, y):
-    "super hacky"
+def textbox(*lines):
+    # there has to be a better way to do this
+    # multiple viewports?  off screen render?
+    # consider a prettier paragraph style
+    s = '\n'.join('%s %s' % pair for pair in lines)
     vp = viewport
+    x,y = vp[0]*0.98 + vp[1]*0.02, vp[2]*0.98 + vp[3]*0.02
     ratio = ((vp[3]-vp[2])/window.height) / ((vp[1]-vp[0])/window.width)
-    label = pyglet.text.Label(s, font_name="Time New Roman", font_size=48,
-        x=0, y=0, color=(255,255,255,128),
-        anchor_x='center', anchor_y='center')
-    verts = []
-    for i,v in enumerate(label._vertex_lists[0].vertices):
-        if i%2:  # y
-            verts.append(v/20 + y)
-        else:
-            verts.append(v/ratio/20 + x)
-    label._vertex_lists[0].vertices = verts
+    # this is technically deprecated
+    # but is the easiest way to do multiline text
+    label = pyglet.font.Text(fnt, text=s, width=1000, color=(1,1,1,0.5),
+        x=0, y=0, halign='left', valign='bottom')
+    for i,vl in enumerate(label._layout._vertex_lists):
+        verts = []
+        for j,v in enumerate(vl.vertices):
+            if j%2:  # y
+                verts.append(v/20 + y)
+            else:
+                verts.append(v/ratio/20 + x)
+        label._layout._vertex_lists[i].vertices = verts
     label.draw()
-
+        
 
 def update(dt):
     now = time.time() - time_start
@@ -202,8 +211,8 @@ def update(dt):
     change_viewport(freq_lower/1e6, freq_upper/1e6, now-history, now)
     vp = viewport
     delta = vp[1] - vp[0]
-    text('%0.3fMHz' % (freq_lower/1e6), vp[0]+delta*0.15, now-5)
-    text('%0.3fMHz' % (freq_upper/1e6), vp[1]-delta*0.15, now-5)
+    textbox(('Lower:', '%0.3fMHz' % (freq_lower/1e6)),
+            ('Upper:', '%0.3fMHz' % (freq_upper/1e6)),)
 
 pyglet.clock.schedule_interval(update, 1/60.0)
 pyglet.app.run()
