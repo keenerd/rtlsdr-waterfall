@@ -20,7 +20,7 @@ if len(sys.argv) != 3:
     print "use: gnuwaterfall.py <lower freq> <upper freq>"
     print "    frequencies in hertz"
     print "    example: gnuwaterfall.py 929e6 930e6"
-    print "    arrow keys pan and zoom"
+    print "    arrow keys pan and zoom (shift for bigger steps)"
     print "    brackets to adjust gain"
     print "    click and drag to select"
     print "    esc to quit"
@@ -117,7 +117,19 @@ def on_draw():
 @window.event
 def on_key_press(symbol, modifiers):
     delta = state.freq_upper - state.freq_lower
-    if   symbol == key.LEFT:
+    if   symbol == key.LEFT and modifiers & key.MOD_SHIFT:
+        state.freq_lower -= delta
+        state.freq_upper -= delta
+    elif symbol == key.RIGHT and modifiers & key.MOD_SHIFT:
+        state.freq_lower += delta
+        state.freq_upper += delta
+    elif symbol == key.UP    and modifiers & key.MOD_SHIFT:
+        state.freq_lower += delta * 0.3
+        state.freq_upper -= delta * 0.3
+    elif symbol == key.DOWN  and modifiers & key.MOD_SHIFT:
+        state.freq_lower -= delta * 0.75
+        state.freq_upper += delta * 0.75
+    elif symbol == key.LEFT:
         state.freq_lower -= delta * 0.1
         state.freq_upper -= delta * 0.1
     elif symbol == key.RIGHT:
