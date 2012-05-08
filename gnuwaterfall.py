@@ -13,9 +13,7 @@ from pyglet.window import key
 from radio_math import psd
 
 # todo
-# more text widgets
 # graph lines
-# hover freq
 # mouse control
 # interleaved scans
 # constellation plot
@@ -24,16 +22,31 @@ from radio_math import psd
 if len(sys.argv) != 3:
     print "use: gnuwaterfall.py <lower freq> <upper freq>"
     print "    frequencies in hertz"
-    print "    example: gnuwaterfall.py 80e6 100e6"
+    print "    example: gnuwaterfall.py 929e6 930e6"
     print "    arrow keys pan and zoom"
+    print "    brackets to adjust gain"
     print "    esc to quit"
     sys.exit(2)
 
-freq_lower = float(sys.argv[1])
-freq_upper = float(sys.argv[2])
-time_start = time.time()
-viewport = (0,0,1,1)
-history = 60  # seconds
+class Stateful(object):
+    "bucket of globals"
+    def __init__(self):
+        self.freq_lower = None
+        self.freq_upper = None
+        self.vertexes   = {}   # timestamp : vertex_list
+        self.time_start = None
+        self.viewport   = None
+        self.history    = 60   # seconds
+        self.focus      = False
+        self.hover      = 0
+
+
+state = Stateful()
+
+state.freq_lower = float(sys.argv[1])
+state.freq_upper = float(sys.argv[2])
+state.time_start = time.time()
+state.viewport = (0,0,1,1)
 
 # Since this is dealing with a stupid amount of data in the video ram,
 # the x axis is MHz and the y axis is seconds.
@@ -99,30 +112,49 @@ def on_draw():
 
 @window.event
 def on_key_press(symbol, modifiers):
-    global freq_lower, freq_upper
-    delta = freq_upper - freq_lower
+    delta = state.freq_upper - state.freq_lower
     if   symbol == key.LEFT:
-        freq_lower -= delta * 0.1
-        freq_upper -= delta * 0.1
+        state.freq_lower -= delta * 0.1
+        state.freq_upper -= delta * 0.1
     elif symbol == key.RIGHT:
-        freq_lower += delta * 0.1
-        freq_upper += delta * 0.1
+        state.freq_lower += delta * 0.1
+        state.freq_upper += delta * 0.1
     elif symbol == key.UP:
-        freq_lower += delta * 0.1
-        freq_upper -= delta * 0.1
+        state.freq_lower += delta * 0.1
+        state.freq_upper -= delta * 0.1
     elif symbol == key.DOWN:
-        freq_lower -= delta * 0.125
-        freq_upper += delta * 0.125
+        state.freq_lower -= delta * 0.125
+        state.freq_upper += delta * 0.125
     elif symbol == key.BRACKETLEFT:
         sdr.gain_change(-1)
     elif symbol == key.BRACKETRIGHT:
         sdr.gain_change(1)
-    freq_lower = max(60e6, freq_lower)
-    freq_upper = min(1700e6, freq_upper)
-    #print '%0.2fMHz - %0.2fMHz' % (freq_lower/1e6, freq_upper/1e6)
+    state.freq_lower = max(60e6, state.freq_lower)
+    state.freq_upper = min(1700e6, state.freq_upper)
 
+@window.event
+def on_mouse_motion(x, y, dx, dy):
+    vp = state.viewport
+    delta = state.freq_upper - state.freq_lower
+    freq = delta * x / window.width + state.freq_lower
+    state.hover = freq
 
-vertexes = {}  # timestamp : vertex_list
+@window.event
+def on_mouse_enter(x, y):
+    state.focus = True
+
+@window.event
+def on_mouse_leave(x, y):
+    state.focus = False
+
+@window.event
+def on_mouse_scroll(x, y, scroll_x, scroll_y):
+    pass
+
+@window.event
+def on_mouse_drag(x, y, dx, dy, buttons, modifiers):
+    pass
+
 batch = pyglet.graphics.Batch()
 
 def mapping(x):
@@ -166,7 +198,6 @@ def acquire_range(lower, upper):
     return xs2, ys2
 
 def render_sample(now, dt, freqs, powers):
-    global vertexes
     min_p = min(powers)
     max_p = max(powers)
     quads = []
@@ -180,10 +211,9 @@ def render_sample(now, dt, freqs, powers):
     colors = colors[:3] + colors + colors[-3:]
     vert_list = batch.add(len(quads)//2, GL_QUAD_STRIP, None,
         ('v2f/static', tuple(quads)), ('c3B/static', tuple(colors)))
-    vertexes[now] = vert_list
+    state.vertexes[now] = vert_list
 
 def change_viewport(x1, x2, y1, y2):
-    global viewport
     glMatrixMode(GL_PROJECTION)
     glLoadIdentity()
     glOrtho(x1, x2, y1, y2, -1, 1)
@@ -191,14 +221,14 @@ def change_viewport(x1, x2, y1, y2):
     #buff = pyglet.image.BufferManager()
     #tuple(pyglet.image.BufferManager.get_viewport(buff))
     # todo - find way of reading viewport
-    viewport = (x1, x2, y1, y2)
+    state.viewport = (x1, x2, y1, y2)
 
-def textbox(*lines):
+def textbox(lines):
     # there has to be a better way to do this
     # multiple viewports?  off screen render?
     # consider a prettier paragraph style
     s = '\n'.join('%s %s' % pair for pair in lines)
-    vp = viewport
+    vp = state.viewport
     x,y = vp[0]*0.98 + vp[1]*0.02, vp[2]*0.98 + vp[3]*0.02
     ratio = ((vp[3]-vp[2])/window.height) / ((vp[1]-vp[0])/window.width)
     # this is technically deprecated
@@ -217,21 +247,25 @@ def textbox(*lines):
         
 
 def update(dt):
-    now = time.time() - time_start
-    freqs,power = acquire_range(freq_lower, freq_upper)
+    now = time.time() - state.time_start
+    freqs,power = acquire_range(state.freq_lower, state.freq_upper)
     render_sample(now, dt, freqs, power)
     window.clear()
     batch.draw()
-    for k in list(vertexes.keys()):
-        if k < now-60:
-            vertexes[k].delete()
-            vertexes.pop(k)
-    change_viewport(freq_lower/1e6, freq_upper/1e6, now-history, now)
-    vp = viewport
+    change_viewport(state.freq_lower/1e6, state.freq_upper/1e6,
+                    now - state.history, now)
+    vp = state.viewport
     delta = vp[1] - vp[0]
-    textbox(('Lower:', '%0.3fMHz' % (freq_lower/1e6)),
-            ('Upper:', '%0.3fMHz' % (freq_upper/1e6)),
-            ('Gain: ', '%0.1fdB'  % sdr.sdr.gain),)
+    stat = [('Lower:', '%0.3fMHz' % (state.freq_lower/1e6)),
+            ('Upper:', '%0.3fMHz' % (state.freq_upper/1e6)),
+            ('Gain: ', '%0.1fdB'  % sdr.sdr.gain),]
+    if state.focus:
+        stat.append(('Mouse:', '%0.3fMHz' % (state.hover/1e6)))
+    textbox(stat)
+    for k in list(state.vertexes.keys()):
+        if k < now-60:
+            state.vertexes[k].delete()
+            state.vertexes.pop(k)
 
 pyglet.clock.schedule_interval(update, 1/60.0)
 pyglet.app.run()
