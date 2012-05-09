@@ -1,6 +1,6 @@
 #! /usr/bin/env python2
 
-# GNU Waterfall
+# RTL-SDR Waterfall
 # licensed GPLv3
 
 import sys, math, time, numpy, pyglet
@@ -17,9 +17,9 @@ from radio_math import psd, Bandpass
 # interleaved scans
 
 if len(sys.argv) != 3:
-    print "use: gnuwaterfall.py <lower freq> <upper freq>"
+    print "use: waterfall.py <lower freq> <upper freq>"
     print "    frequencies in hertz"
-    print "    example: gnuwaterfall.py 929e6 930e6"
+    print "    example: waterfall.py 929e6 930e6"
     print "    arrow keys pan and zoom (shift for bigger steps)"
     print "    brackets to adjust gain"
     print "    click and drag to select"
