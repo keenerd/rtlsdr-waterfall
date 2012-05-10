@@ -1,4 +1,4 @@
-#! /usr/bin/env python
+#! /usr/bin/env python2
 
 from itertools import *
 import math, numpy
@@ -10,21 +10,24 @@ class Translate(object):
     def __init__(self, num, den):
         angles = [(a*tau*num/den) % tau for a in range(den)]
         fir = [complex(math.cos(a), math.sin(a)) for a in angles]
-        self.continuous_fir = cycle(fir)
+        self.looping_fir = cycle(fir)
     def __call__(self, stream):
-        return numpy.array([s1*s2 for s1,s2 in izip(self.continuous_fir, stream)])
+        return numpy.array([s1*s2 for s1,s2 in izip(self.looping_fir, stream)])
 
 class Downsample(object):
     "set up once, consumes an I/Q stream, returns an I/Q stream"
     # aka lowpass
-    # todo, floating scales
     def __init__(self, scale):
         self.scale = scale
         self.offset = 0
+        self.window = numpy.hanning(scale * 2)
+        self.window = self.window / sum(self.window)
     def __call__(self, stream):
         prev_off = self.offset
         self.offset = self.scale - ((len(stream) + self.offset) % self.scale)
-        return stream[prev_off::self.scale]
+        # bad edges, does 60x more math than needed
+        stream2 = numpy.convolve(stream, self.window)
+        return stream2[prev_off::self.scale]
 
 class Upsample(object):
     # numpy.interp would be perfect, but can't do complex
