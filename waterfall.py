@@ -15,6 +15,8 @@ from radio_math import psd, Bandpass
 # todo
 # graph lines
 # interleaved scans
+# multithreaded async scan
+# confirm Bandpass() math
 
 if len(sys.argv) != 3:
     print "use: waterfall.py <lower freq> <upper freq>"
@@ -185,7 +187,8 @@ def on_mouse_drag(x, y, dx, dy, buttons, modifiers):
     if state.hl_lo != state.hl_hi:
         configure_highlight()
 
-batch = pyglet.graphics.Batch()
+batch  = pyglet.graphics.Batch()
+batch2 = pyglet.graphics.Batch()
 
 def x_to_freq(x):
     vp = state.viewport
@@ -325,6 +328,7 @@ def update(dt):
     render_sample(now, dt, freqs, power)
     window.clear()
     batch.draw()
+    batch2.draw()
     change_viewport(state.freq_lower/1e6, state.freq_upper/1e6,
                     now - state.history, now)
     vp = state.viewport
@@ -345,7 +349,14 @@ def update(dt):
         v = state.vertexes.pop(0)
         del(v)
 
+def batch_swap(dt):
+    "call occasionally to actually free batch's memory"
+    global batch, batch2
+    batch, batch2 = batch2, batch
+
+
 pyglet.clock.schedule_interval(update, 1/60.0)
+pyglet.clock.schedule_interval(batch_swap, 70)
 pyglet.app.run()
 
 
