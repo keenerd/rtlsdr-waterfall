@@ -29,11 +29,41 @@ class Downsample(object):
         stream2 = numpy.convolve(stream, self.window)
         return stream2[prev_off::self.scale]
 
+class DownsampleFloat(object):
+    # poor quality, but good temporal accuracy
+    # uses triangle window
+    def __init__(self, scale):
+        self.scale = scale
+        self.offset = 0
+    def __call__(self, stream):
+        # bad edges
+        # should be using more numpy magic
+        scale = self.scale
+        stream2 = []
+        for x in numpy.arange(self.offset, len(stream), scale):
+            frac = x % 1.0
+            window = numpy.concatenate((numpy.arange(1-frac, scale),
+                     numpy.arange(int(scale)+frac-1, 0, -1)))
+            window = window / sum(window)
+            start = x - len(window)//2
+            start = max(start, 0)
+            start = min(start, len(stream)-len(window))
+            c = sum(stream[start : start+len(window)] * window)
+            stream2.append(c)
+        return numpy.array(stream2)
+
 class Upsample(object):
-    # numpy.interp would be perfect, but can't do complex
-    # or floating point scaling factor
-    # minimal power interpolation?
-    pass
+    # use minimal power interpolation?
+    def __init__(self, scale):
+        self.scale = scale
+        self.offset = 0
+    def __call__(self, stream):
+        xp = range(len(stream))
+        x2 = numpy.arange(self.offset, len(stream), 1.0/self.scale)
+        self.offset = (len(stream) + self.offset) % self.scale
+        reals = numpy.interp(x2, xp, stream.real)
+        imags = numpy.interp(x2, xp, stream.imag)
+        return numpy.array([complex(*ri) for ri in zip(reals, imags)])
 
 class Bandpass(object):
     "set up once, consumes an I/Q stream, returns an I/Q stream"

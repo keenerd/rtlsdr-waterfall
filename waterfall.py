@@ -3,20 +3,26 @@
 # RTL-SDR Waterfall
 # licensed GPLv3
 
-import sys, math, time, numpy, pyglet
+import sys, math, time, ctypes, numpy, pyglet
 
 from rtlsdr import *
 from itertools import *
 from pyglet.gl import *
 from pyglet.window import key
 
-from radio_math import psd, Bandpass
+from radio_math import *
 
 # todo
-# graph lines
 # interleaved scans
 # multithreaded async scan
-# confirm Bandpass() math
+# textures instead of quadstrip could save a lot
+# (3 bytes per sample instead of 14)
+# resizable selection
+# autocorrelation
+# croccydile wants 30 minutes at 4 fps.
+# middle mouse velocity drag to free pan the viewport?
+# middle scroll to reach history?
+# automatic offset for low bandwidth
 
 if len(sys.argv) != 3:
     print "use: waterfall.py <lower freq> <upper freq>"
@@ -200,6 +206,8 @@ def configure_highlight():
         return
     pass_fc = (state.hl_lo + state.hl_hi) / 2
     pass_bw = state.hl_hi - state.hl_lo
+    if pass_bw == 0:
+        return
     state.hl_filter = Bandpass(sdr.prev_fc, sdr.prev_fs, 
                                pass_fc, pass_bw)
 
@@ -216,9 +224,9 @@ def constellation(stream):
     x,y = vp[0]*0.10 + vp[1]*0.90, vp[2]*0.80 + vp[3]*0.20
     ratio = ((vp[3]-vp[2])/window.height) / ((vp[1]-vp[0])/window.width)
     for p in stream2:
-        xp,yp = p.real, p.imag
-        points.append(xp/5 + x)
-        points.append(yp*ratio/5 + y)
+        xp,yp= p.real, p.imag
+        points.append(xp + x)
+        points.append(yp*ratio + y)
     state.hl_pixels = points
 
 def mapping(x):
@@ -230,6 +238,33 @@ def mapping(x):
 
 def log2(x):
     return math.log(x)/math.log(2)
+
+def raw_image(colors):
+    "convert a list of RGB into a pyglet image"
+    # still have to bind it to a polygon and make it work
+    ca1 = ctypes.c_uint8 * len(colors)
+    ca2 = ca1(*colors)
+    return pyglet.image.ImageData(len(colors)//3, 1, 'RGB', ca2)
+
+def acquire_offset(center, bw, detail, samples=8, relay=None):
+    "a better view for high zoom"
+    assert bw <= 1.4e6
+    if detail < 8:
+        detail = 8
+    sdr.tune(center-0.7e6, 2.8e6, sdr.prev_g)
+    detail = 2**int(math.ceil(log2(detail)))
+    scale = 2.8e6 / bw
+    sample_count = samples * detail * scale
+    data = sdr.read_samples(sample_count)
+    # should probably cache these filters
+    data = Translate(1, 4)(data)
+    data = DownsampleFloat(scale)(data)
+    ys,xs = psd(data, NFFT=detail, Fs=bw/1e6, Fc=center/1e6)
+    ys = 10 * numpy.log10(ys)
+    if relay:
+        relay(data)
+    return xs, ys
+
 
 def acquire_sample(center, bw, detail, samples=8, relay=None):
     "collect a single frequency"
@@ -247,11 +282,15 @@ def acquire_sample(center, bw, detail, samples=8, relay=None):
     return xs, ys
 
 def acquire_range(lower, upper):
-    "collect multiple frequencies"
-    delta = upper - lower
+    "automatically juggles frequencies"
+    delta  = upper - lower
+    center = (upper+lower)/2
+    #if delta < 1.4e6:
+    #    return acquire_offset(center, delta,
+    #        detail=window.width, relay=constellation)
     if delta < 2.8e6:
         # single sample
-        return acquire_sample((upper+lower)/2, 2.8e6,
+        return acquire_sample(center, 2.8e6,
             detail=window.width*2.8e6/delta,
             relay=constellation)
     xs2 = numpy.array([])
