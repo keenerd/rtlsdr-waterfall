@@ -43,9 +43,11 @@ class Stateful(object):
         self.freq_lower = None
         self.freq_upper = None
         self.vertexes   = []   # (timestamp, vertex_list)
+        self.batches    = []
         self.time_start = None
         self.viewport   = None
         self.history    = 60   # seconds
+        self.fps        = 20
         self.focus      = False
         self.hover      = 0
         self.highlight  = False
@@ -196,8 +198,8 @@ def on_mouse_drag(x, y, dx, dy, buttons, modifiers):
     if state.hl_lo != state.hl_hi:
         configure_highlight()
 
-batch  = pyglet.graphics.Batch()
-batch2 = pyglet.graphics.Batch()
+for i in range(state.history//60 + 2):
+    state.batches.append(pyglet.graphics.Batch())
 
 def x_to_freq(x):
     vp = state.viewport
@@ -309,7 +311,7 @@ def render_sample(now, dt, freqs, powers):
     # quads/colors are slanted?
     quads = quads[:2] + quads + quads[-2:]
     colors = colors[:3] + colors + colors[-3:]
-    # something here leaks memory at 50MB/minute
+    batch = state.batches[0]
     vert_list = batch.add(len(quads)//2, GL_QUAD_STRIP, None,
         ('v2f/static', tuple(quads)), ('c3B/static', tuple(colors)))
     state.vertexes.append((now, vert_list))
@@ -334,7 +336,7 @@ def render_sample2(now, dt, freqs, powers):
     for p in powers:
         colors.extend(mapping(p))
     image = raw_image(colors)
-    sprite = pyglet.sprite.Sprite(image, batch=batch)
+    sprite = pyglet.sprite.Sprite(image, batch=state.batchs[0])
     width = freqs[-1] - freqs[0]
     stretched_sprite(sprite, freqs[0], now-dt, width, dt)
     state.vertexes.append((now, sprite))
@@ -357,6 +359,7 @@ def textbox(lines):
     vp = state.viewport
     x,y = vp[0]*0.98 + vp[1]*0.02, vp[2]*0.98 + vp[3]*0.02
     ratio = ((vp[3]-vp[2])/window.height) / ((vp[1]-vp[0])/window.width)
+    scale = 1200.0 / state.history
     # this is technically deprecated
     # but is the easiest way to do multiline text
     label = pyglet.font.Text(fnt, text=s, width=1000, color=(1,1,1,0.5),
@@ -365,9 +368,9 @@ def textbox(lines):
         verts = []
         for j,v in enumerate(vl.vertices):
             if j%2:  # y
-                verts.append(v/20 + y)
+                verts.append(v/scale + y)
             else:
-                verts.append(v/ratio/20 + x)
+                verts.append(v/ratio/scale + x)
         label._layout._vertex_lists[i].vertices = verts
     label.draw()
 
@@ -387,8 +390,8 @@ def update(dt):
     freqs,power = acquire_range(state.freq_lower, state.freq_upper)
     render_sample(now, dt, freqs, power)
     window.clear()
-    batch.draw()
-    batch2.draw()
+    for batch in state.batches:
+        batch.draw()
     change_viewport(state.freq_lower/1e6, state.freq_upper/1e6,
                     now - state.history, now)
     vp = state.viewport
@@ -404,18 +407,18 @@ def update(dt):
         text.append(('Mouse:', '%0.3fMHz' % (state.hover/1e6)))
     textbox(text)
     highlighter()
-    while state.vertexes and state.vertexes[0][0] < (now-60):
+    while state.vertexes and state.vertexes[0][0] < (now-state.history):
         state.vertexes[0][1].delete()
         v = state.vertexes.pop(0)
         del(v)
 
 def batch_swap(dt):
     "call occasionally to actually free batch's memory"
-    global batch, batch2
-    batch, batch2 = batch2, batch
+    batch = state.batches.pop(0)
+    state.batches.append(batch)
 
 
-pyglet.clock.schedule_interval(update, 1/60.0)
+pyglet.clock.schedule_interval(update, 1.0/state.fps)
 pyglet.clock.schedule_interval(batch_swap, 70)
 pyglet.app.run()
 
