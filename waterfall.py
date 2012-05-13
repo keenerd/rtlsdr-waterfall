@@ -24,6 +24,9 @@ from radio_math import *
 # middle scroll to reach history?
 # automatic offset for low bandwidth
 
+# side note - textures don't work with Catalyst 11.12
+# use 12.4 or sed -i 's/v2i/v2f/g' sprite.py
+
 if len(sys.argv) != 3:
     print "use: waterfall.py <lower freq> <upper freq>"
     print "    frequencies in hertz"
@@ -229,22 +232,8 @@ def constellation(stream):
         points.append(yp*ratio + y)
     state.hl_pixels = points
 
-def mapping(x):
-    "assumes -50 to 0 range, returns color"
-    r = int((x+50) * 255 // 50)
-    r = max(0, r)
-    r = min(255, r)
-    return r,r,100
-
 def log2(x):
     return math.log(x)/math.log(2)
-
-def raw_image(colors):
-    "convert a list of RGB into a pyglet image"
-    # still have to bind it to a polygon and make it work
-    ca1 = ctypes.c_uint8 * len(colors)
-    ca2 = ca1(*colors)
-    return pyglet.image.ImageData(len(colors)//3, 1, 'RGB', ca2)
 
 def acquire_offset(center, bw, detail, samples=8, relay=None):
     "a better view for high zoom"
@@ -302,6 +291,13 @@ def acquire_range(lower, upper):
         ys2 = numpy.append(ys2, ys) 
     return xs2, ys2
 
+def mapping(x):
+    "assumes -50 to 0 range, returns color"
+    r = int((x+50) * 255 // 50)
+    r = max(0, r)
+    r = min(255, r)
+    return r,r,100
+
 def render_sample(now, dt, freqs, powers):
     quads = []
     colors = []
@@ -317,6 +313,31 @@ def render_sample(now, dt, freqs, powers):
     vert_list = batch.add(len(quads)//2, GL_QUAD_STRIP, None,
         ('v2f/static', tuple(quads)), ('c3B/static', tuple(colors)))
     state.vertexes.append((now, vert_list))
+
+def raw_image(colors):
+    "convert a list of RGB into a pyglet image"
+    # still have to bind it to a polygon and make it work
+    ca1 = ctypes.c_uint8 * len(colors)
+    ca2 = ca1(*colors)
+    return pyglet.image.ImageData(len(colors)//3, 1, 'RGB', ca2)
+
+def stretched_sprite(sprite, x, y, w, h):
+    # probably should patch sprite.scale to take a (w,h)
+    # or width/height to be individually settable
+    verts = [x, y, x+w, y, x+w, y+h, x, y+h]
+    sprite._vertex_list._set_vertices(verts)
+
+def render_sample2(now, dt, freqs, powers):
+    # uses 1/3 the ram but runs at 1/3rd the speed
+    # batches draw at O(n)
+    colors = []
+    for p in powers:
+        colors.extend(mapping(p))
+    image = raw_image(colors)
+    sprite = pyglet.sprite.Sprite(image, batch=batch)
+    width = freqs[-1] - freqs[0]
+    stretched_sprite(sprite, freqs[0], now-dt, width, dt)
+    state.vertexes.append((now, sprite))
 
 def change_viewport(x1, x2, y1, y2):
     glMatrixMode(GL_PROJECTION)
