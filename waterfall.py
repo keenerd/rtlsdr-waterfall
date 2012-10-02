@@ -15,14 +15,12 @@ from radio_math import *
 # todo
 # interleaved scans
 # multithreaded async scan
-# textures instead of quadstrip could save a lot
-# (3 bytes per sample instead of 14)
 # resizable selection
-# autocorrelation
-# croccydile wants 30 minutes at 4 fps.
 # middle mouse velocity drag to free pan the viewport?
 # middle scroll to reach history?
 # automatic offset for low bandwidth
+# hdsdr feature: set center freq on right click
+# gpredict integration
 
 # side note - textures don't work with Catalyst 11.12
 # use 12.4 or sed -i 's/v2i/v2f/g' sprite.py
@@ -34,6 +32,8 @@ if len(sys.argv) != 3:
     print "    arrow keys pan and zoom (shift for bigger steps)"
     print "    brackets to adjust gain"
     print "    click and drag to select"
+    print "    A for autocorrelation"
+    print "    C for constellation"
     print "    esc to quit"
     sys.exit(2)
 
@@ -51,6 +51,7 @@ class Stateful(object):
         self.focus      = False
         self.hover      = 0
         self.highlight  = False
+        self.hl_mode    = None  # set this to a function!
         self.hl_lo      = None
         self.hl_hi      = None
         self.hl_filter  = None
@@ -158,6 +159,10 @@ def on_key_press(symbol, modifiers):
         sdr.gain_change(-1)
     elif symbol == key.BRACKETRIGHT:
         sdr.gain_change(1)
+    elif symbol == key.A:
+        state.hl_mode = autocorrelation
+    elif symbol == key.C:
+        state.hl_mode = constellation
     state.freq_lower = max(60e6, state.freq_lower)
     state.freq_upper = min(1700e6, state.freq_upper)
 
@@ -188,7 +193,7 @@ def on_mouse_drag(x, y, dx, dy, buttons, modifiers):
     if not state.highlight:
         state.highlight = True
         state.hl_lo  = cursor
-        state.hl_hi   = cursor
+        state.hl_hi  = cursor
         return
     if cursor > state.hl_lo:
         state.hl_hi  = cursor
@@ -229,10 +234,35 @@ def constellation(stream):
     x,y = vp[0]*0.10 + vp[1]*0.90, vp[2]*0.80 + vp[3]*0.20
     ratio = ((vp[3]-vp[2])/window.height) / ((vp[1]-vp[0])/window.width)
     for p in stream2:
-        xp,yp= p.real, p.imag
+        xp,yp = p.real, p.imag
         points.append(xp + x)
         points.append(yp*ratio + y)
     state.hl_pixels = points
+
+def autocorrelation(stream):
+    if state.hl_filter is None:
+        state.hl_pixels = None
+        return
+    vp = state.viewport
+    stream2 = state.hl_filter(stream)
+    bounds = max(numpy.abs(stream2))
+    if bounds > 1:
+        stream2 = stream2/bounds
+    sr = stream2.real
+    auto = numpy.correlate(sr, sr, mode='full')[len(sr):]
+    length = len(auto)
+    x,y = vp[0]*0.05 + vp[1]*0.95, vp[2]*0.80 + vp[3]*0.20
+    ratio = ((vp[3]-vp[2])/window.height) / ((vp[1]-vp[0])/window.width)
+    points = [x - length/500.0, y, x, y]
+    auto *= ratio
+    for xp,yp in enumerate(auto, -length):
+        xp /= 500.0
+        points.append(xp + x)
+        points.append(yp + y)
+        points.append(xp+x)
+        points.append(y)
+    state.hl_pixels = points
+
 
 def log2(x):
     return math.log(x)/math.log(2)
@@ -283,7 +313,7 @@ def acquire_range(lower, upper):
         # single sample
         return acquire_sample(center, 2.8e6,
             detail=window.width*2.8e6/delta,
-            relay=constellation)
+            relay=state.hl_mode)
     xs2 = numpy.array([])
     ys2 = numpy.array([])
     detail = window.width // ((delta)/(2.8e6))
@@ -375,7 +405,7 @@ def textbox(lines):
     label.draw()
 
 def highlighter():
-    if not state.highlight:
+    if not state.highlight or not state.hl_pixels:
         return
     # draw a single translucent quad
     vp = state.viewport
@@ -386,6 +416,7 @@ def highlighter():
                          ('c4B', color))
 
 def update(dt):
+    #print 1.0/dt
     now = time.time() - state.time_start
     freqs,power = acquire_range(state.freq_lower, state.freq_upper)
     render_sample(now, dt, freqs, power)
@@ -399,10 +430,12 @@ def update(dt):
     text = [('Lower:', '%0.3fMHz' % (state.freq_lower/1e6)),
             ('Upper:', '%0.3fMHz' % (state.freq_upper/1e6)),
             ('Gain: ', '%0.1fdB'  % sdr.sdr.gain),]
-    if state.highlight:
-        text.append(('Width:', '%0.3fkHz' % ((state.hl_hi-state.hl_lo)/1e3)))
     if state.highlight and state.hl_pixels:
+        text.append(('Width:', '%0.3fkHz' % ((state.hl_hi-state.hl_lo)/1e3)))
+    if state.hl_mode==constellation and state.hl_pixels:
         pyglet.graphics.draw(len(state.hl_pixels)/2, GL_POINTS, ('v2f', state.hl_pixels))
+    if state.hl_mode==autocorrelation and state.hl_pixels:
+        pyglet.graphics.draw(len(state.hl_pixels)/2, GL_LINES, ('v2f', state.hl_pixels))
     if state.focus:
         text.append(('Mouse:', '%0.3fMHz' % (state.hover/1e6)))
     textbox(text)
@@ -417,7 +450,7 @@ def batch_swap(dt):
     batch = state.batches.pop(0)
     state.batches.append(batch)
 
-
+state.hl_mode = constellation
 pyglet.clock.schedule_interval(update, 1.0/state.fps)
 pyglet.clock.schedule_interval(batch_swap, 70)
 pyglet.app.run()
